@@ -10,7 +10,6 @@
         <item name="colorOnPrimary">#F5F0F7</item>
         <item name="android:colorPrimary">#101014</item>
         <item name="android:statusBarColor">#101014</item>
-        <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowBackground">#101014</item>
         <item name="actionBarStyle">@style/Theme.VideoPlayer.ActionBar</item>
         <item name="android:actionBarStyle">@style/Theme.VideoPlayer.ActionBar</item>

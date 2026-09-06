@@ -3,10 +3,12 @@ package `is`.xyz.mpv
 import android.content.Context
 import android.graphics.Bitmap
 import android.view.Surface
+import androidx.annotation.Keep
 
 // Wrapper for native library
 
 @Suppress("unused")
+@Keep
 object MPVLib {
     init {
         val libs = arrayOf("mpv", "player")

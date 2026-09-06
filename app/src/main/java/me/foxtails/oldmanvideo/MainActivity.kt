@@ -10,13 +10,18 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.AppCompatImageView
+import androidx.core.content.edit
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ViewModel
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.color.MaterialColors
@@ -53,10 +58,9 @@ class MainActivity : AppCompatActivity() {
                     .orEmpty()
                     .toMutableSet()
                 folders.add(uri.toString())
-                getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
-                    .edit()
-                    .putStringSet(FOLDER_URIS_KEY, folders)
-                    .apply()
+                getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit {
+                    putStringSet(FOLDER_URIS_KEY, folders)
+                }
                 scanSavedFolders()
             } catch (_: SecurityException) {
                 // The selected tree was not granted persistable access.
@@ -66,6 +70,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) { navigateBack() }
         libraryRoots = libraryViewModel.libraryRoots.ifEmpty { loadCachedLibrary() }
         val shouldScanSavedFolders = libraryRoots.isEmpty() && getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
             .getStringSet(FOLDER_URIS_KEY, emptySet())
@@ -240,14 +245,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun gridSpanCount(): Int = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 3 else 2
 
-    @Deprecated("Use OnBackPressedDispatcher for new code")
-    override fun onBackPressed() {
+    private fun navigateBack() {
         if (folderStack.isNotEmpty()) {
             folderStack.removeLast()
             libraryViewModel.folderStack = folderStack.toList()
             showEntries(folderStack.lastOrNull()?.children ?: rootEntries(libraryRoots))
         } else {
-            super.onBackPressed()
+            finish()
         }
     }
 
@@ -269,10 +273,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveCachedLibrary(roots: List<LibraryFolder>) {
         val json = JSONArray().apply { roots.forEach { put(folderToJson(it)) } }
-        getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
-            .edit()
-            .putString(LIBRARY_CACHE_KEY, json.toString())
-            .apply()
+        getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE).edit {
+            putString(LIBRARY_CACHE_KEY, json.toString())
+        }
     }
 
     private fun loadCachedLibrary(): List<LibraryFolder> {
@@ -363,13 +366,7 @@ data class LibraryFolder(
 private class VideoAdapter(
     private val onVideoClicked: (LibraryVideo) -> Unit,
     private val onFolderClicked: (LibraryFolder) -> Unit,
-) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
-    private var entries = emptyList<LibraryEntry>()
-
-    fun submitList(newEntries: List<LibraryEntry>) {
-        entries = newEntries
-        notifyDataSetChanged()
-    }
+) : ListAdapter<LibraryEntry, VideoAdapter.VideoViewHolder>(ENTRY_DIFF) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
         val image = AspectRatioImageView(parent.context).apply {
@@ -400,10 +397,8 @@ private class VideoAdapter(
     }
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
-        holder.bind(entries[position])
+        holder.bind(getItem(position))
     }
-
-    override fun getItemCount(): Int = entries.size
 
     inner class VideoViewHolder(
         itemView: LinearLayout,
@@ -425,9 +420,23 @@ private class VideoAdapter(
             }
         }
     }
+
+    companion object {
+        private val ENTRY_DIFF = object : DiffUtil.ItemCallback<LibraryEntry>() {
+            override fun areItemsTheSame(oldItem: LibraryEntry, newItem: LibraryEntry): Boolean =
+                when {
+                    oldItem is LibraryVideo && newItem is LibraryVideo -> oldItem.uri == newItem.uri
+                    oldItem is LibraryFolder && newItem is LibraryFolder -> oldItem.uri == newItem.uri
+                    else -> false
+                }
+
+            override fun areContentsTheSame(oldItem: LibraryEntry, newItem: LibraryEntry): Boolean =
+                oldItem == newItem
+        }
+    }
 }
 
-private class AspectRatioImageView(context: android.content.Context) : ImageView(context) {
+private class AspectRatioImageView(context: android.content.Context) : AppCompatImageView(context) {
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, widthMeasureSpec)
         setMeasuredDimension(measuredWidth, measuredWidth * 4 / 3)

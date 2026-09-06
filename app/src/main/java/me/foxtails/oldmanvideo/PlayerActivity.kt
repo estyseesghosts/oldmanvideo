@@ -11,9 +11,11 @@ import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.activity.viewModels
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -33,6 +35,7 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) { closePlayer() }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         hideSystemBars()
         val videoUri = intent.getStringExtra(VIDEO_URI_EXTRA) ?: run {
@@ -169,8 +172,9 @@ class PlayerActivity : ComponentActivity() {
 
     private fun requestOrientationFor(videoUri: String) {
         val orientation = runCatching {
-            MediaMetadataRetriever().use { retriever ->
-                retriever.setDataSource(this, android.net.Uri.parse(videoUri))
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(this, videoUri.toUri())
                 val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
                 val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
                 val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
@@ -179,13 +183,11 @@ class PlayerActivity : ComponentActivity() {
                 } else {
                     ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                 }
+            } finally {
+                retriever.release()
             }
         }.getOrDefault(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
         requestedOrientation = orientation
-    }
-
-    override fun onBackPressed() {
-        closePlayer()
     }
 
     override fun onDestroy() {
@@ -217,7 +219,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun resolveVideoPath(uriString: String): String {
-        val uri = android.net.Uri.parse(uriString)
+        val uri = uriString.toUri()
         runCatching {
             contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                 Utils.findRealPath(descriptor.fd)
