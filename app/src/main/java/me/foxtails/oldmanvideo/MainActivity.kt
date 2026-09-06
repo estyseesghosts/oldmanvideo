@@ -119,7 +119,7 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
         })
-        showEntries(folderStack.lastOrNull()?.children ?: libraryRoots)
+        showEntries(folderStack.lastOrNull()?.children ?: rootEntries(libraryRoots))
         if (shouldScanSavedFolders) {
             swipeRefresh.isRefreshing = true
             scanSavedFolders()
@@ -171,7 +171,7 @@ class MainActivity : AppCompatActivity() {
                 saveCachedLibrary(libraryRoots)
                 folderStack.clear()
                 libraryViewModel.folderStack = emptyList()
-                showEntries(libraryRoots)
+                showEntries(rootEntries(libraryRoots))
             } finally {
                 swipeRefresh.isRefreshing = false
             }
@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
         if (folderStack.isNotEmpty()) {
             folderStack.removeLast()
             libraryViewModel.folderStack = folderStack.toList()
-            showEntries(folderStack.lastOrNull()?.children ?: libraryRoots)
+            showEntries(folderStack.lastOrNull()?.children ?: rootEntries(libraryRoots))
         } else {
             super.onBackPressed()
         }
@@ -339,6 +339,11 @@ sealed interface LibraryEntry {
     val name: String
     val thumbnailUri: android.net.Uri
 }
+
+internal fun <T> flattenRootEntries(roots: List<List<T>>): List<T> = roots.flatten()
+
+internal fun rootEntries(roots: List<LibraryFolder>): List<LibraryEntry> =
+    flattenRootEntries(roots.map { it.children })
 
 data class LibraryVideo(
     override val name: String,

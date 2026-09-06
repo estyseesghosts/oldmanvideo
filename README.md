@@ -1,6 +1,6 @@
 # oldmanvideo
 
-a simple video player for old man who hate computer
+a dead-simple local file movie player for your grandparents
 
 give it a folder and it will show you large tiles with a filename underneath. 
 
@@ -11,4 +11,4 @@ for better display, you can make a folder like "MyFilm.movie" with the following
 - subs.ass (any format ok again)
 - thumbnail.png 
 
-and if you put all of those MyFilm.movie inside a folder called Movies, then it should sort them by year. maybe i'll add genre tags too.
+and if you put all of those MyFilm.movie inside a folder called Movies, then it should sort them by year. (TODO) maybe i'll add genre tags too. (TODO)
