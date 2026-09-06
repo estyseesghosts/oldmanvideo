@@ -86,19 +86,21 @@ class PlayerViewModel : ViewModel(), MPVLib.EventObserver {
     }
 
     override fun event(eventId: Int) {
-        if (eventId == MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED) {
-            mainHandler.post { onFileLoaded?.invoke() }
+        when (eventId) {
+            MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED ->
+                mainHandler.post { onFileLoaded?.invoke() }
+            MPVLib.MpvEvent.MPV_EVENT_END_FILE ->
+                mainHandler.post { onPlaybackEnded?.invoke() }
         }
     }
 
     var onFileLoaded: (() -> Unit)? = null
-        set(value) {
-            field = value
-        }
+    var onPlaybackEnded: (() -> Unit)? = null
 
     override fun onCleared() {
         mainHandler.removeCallbacksAndMessages(null)
         onFileLoaded = null
+        onPlaybackEnded = null
         MPVLib.removeObserver(this)
         super.onCleared()
     }

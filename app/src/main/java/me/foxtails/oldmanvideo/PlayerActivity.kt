@@ -82,7 +82,7 @@ class PlayerActivity : ComponentActivity() {
                             }
                         },
                         onToggleSubtitles = playerViewModel::toggleSubtitles,
-                        onExit = { finish() },
+                        onExit = ::closePlayer,
                     )
                 }
             }
@@ -123,6 +123,7 @@ class PlayerActivity : ComponentActivity() {
                 }
             }
         }
+        playerViewModel.onPlaybackEnded = ::closePlayer
         MPVLib.setOptionString("save-position-on-quit", "no")
         MPVLib.setOptionString("force-window", "no")
         MPVLib.setOptionString("idle", "once")
@@ -184,7 +185,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onBackPressed() {
-        finish()
+        closePlayer()
     }
 
     override fun onDestroy() {
@@ -198,6 +199,7 @@ class PlayerActivity : ComponentActivity() {
         isMpvInitialized = false
         pendingExternalSubtitlePath = null
         playerViewModel.onFileLoaded = null
+        playerViewModel.onPlaybackEnded = null
 
         MPVLib.removeObserver(playerViewModel)
         if (isSurfaceAttached) {
@@ -207,6 +209,11 @@ class PlayerActivity : ComponentActivity() {
             MPVLib.detachSurface()
         }
         MPVLib.destroy()
+    }
+
+    private fun closePlayer() {
+        if (isFinishing || isDestroyed) return
+        finish()
     }
 
     private fun resolveVideoPath(uriString: String): String {
