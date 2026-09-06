@@ -6,22 +6,35 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
+import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.ViewModel
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.documentfile.provider.DocumentFile
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import coil.load
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+import kotlin.coroutines.coroutineContext
 
 class MainActivity : AppCompatActivity() {
+    private val libraryViewModel: LibraryViewModel by viewModels()
     private lateinit var videoAdapter: VideoAdapter
     private lateinit var emptyState: TextView
+    private lateinit var swipeRefresh: SwipeRefreshLayout
     private var scanJob: Job? = null
+    private var libraryRoots = emptyList<LibraryFolder>()
+    private val folderStack = ArrayDeque<LibraryFolder>()
     private val folderPicker = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -49,14 +62,30 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        videoAdapter = VideoAdapter { video ->
-            startActivity(Intent(this, PlayerActivity::class.java).apply {
-                putExtra(PlayerActivity.VIDEO_URI_EXTRA, video.uri.toString())
-            })
-        }
+        libraryRoots = libraryViewModel.libraryRoots
+        folderStack.addAll(libraryViewModel.folderStack)
+        videoAdapter = VideoAdapter(
+            onVideoClicked = { video ->
+                startActivity(Intent(this, PlayerActivity::class.java).apply {
+                    putExtra(PlayerActivity.VIDEO_URI_EXTRA, video.uri.toString())
+                })
+            },
+            onFolderClicked = { folder ->
+                folderStack.addLast(folder)
+                libraryViewModel.folderStack = folderStack.toList()
+                showEntries(folder.children)
+            },
+        )
         val grid = RecyclerView(this).apply {
-            layoutManager = GridLayoutManager(this@MainActivity, 2)
+            layoutManager = GridLayoutManager(this@MainActivity, gridSpanCount())
             adapter = videoAdapter
+        }
+        swipeRefresh = SwipeRefreshLayout(this).apply {
+            setOnRefreshListener { scanSavedFolders() }
+            addView(grid, ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ))
         }
         emptyState = TextView(this).apply {
             gravity = android.view.Gravity.CENTER
@@ -65,7 +94,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(32, 32, 32, 32)
         }
         setContentView(FrameLayout(this).apply {
-            addView(grid, FrameLayout.LayoutParams(
+            addView(swipeRefresh, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
@@ -74,12 +103,9 @@ class MainActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
         })
+        showEntries(folderStack.lastOrNull()?.children ?: libraryRoots)
     }
 
-    override fun onStart() {
-        super.onStart()
-        scanSavedFolders()
-    }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menu.add(Menu.NONE, ADD_FOLDER_MENU_ID, Menu.NONE, R.string.add_folder)
@@ -110,30 +136,65 @@ class MainActivity : AppCompatActivity() {
             }
         scanJob?.cancel()
         scanJob = lifecycleScope.launch {
-            val videos = withContext(Dispatchers.IO) {
-                folderUris.flatMap { uri ->
-                    DocumentFile.fromTreeUri(this@MainActivity, uri)
-                        ?.let(::findVideos)
-                        .orEmpty()
+            try {
+                val roots = withContext(Dispatchers.IO) {
+                    folderUris.flatMap { uri ->
+                        DocumentFile.fromTreeUri(this@MainActivity, uri)
+                            ?.let { root -> buildFolder(root) }
+                            ?.let(::listOf)
+                            .orEmpty()
+                    }
                 }
-                    .distinctBy(VideoFile::uri)
-                    .sortedBy { it.name.lowercase() }
+                libraryRoots = roots.sortedBy { it.name.lowercase(Locale.ROOT) }
+                libraryViewModel.libraryRoots = libraryRoots
+                folderStack.clear()
+                libraryViewModel.folderStack = emptyList()
+                showEntries(libraryRoots)
+            } finally {
+                swipeRefresh.isRefreshing = false
             }
-            videoAdapter.submitList(videos)
-            emptyState.visibility = if (videos.isEmpty()) TextView.VISIBLE else TextView.GONE
         }
     }
 
-    private fun findVideos(folder: DocumentFile): List<VideoFile> {
-        val result = mutableListOf<VideoFile>()
-        for (file in folder.listFiles()) {
-            if (file.isDirectory) {
-                result += findVideos(file)
-            } else if (file.isFile && isVideo(file)) {
-                result += VideoFile(file.name.orEmpty(), file.uri)
-            }
+    private suspend fun buildFolder(folder: DocumentFile): LibraryFolder? {
+        coroutineContext.ensureActive()
+        val files = try {
+            folder.listFiles()
+        } catch (_: Exception) {
+            return null
         }
-        return result
+        val children = buildList {
+            for (file in files) {
+                coroutineContext.ensureActive()
+                when {
+                    file.isDirectory -> buildFolder(file)?.let(::add)
+                    file.isFile && isVideo(file) -> add(LibraryVideo(file.name.orEmpty(), file.uri))
+                }
+            }
+        }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        return if (children.isEmpty()) null else LibraryFolder(
+            name = folder.name.orEmpty(),
+            uri = folder.uri,
+            children = children,
+        )
+    }
+
+    private fun showEntries(entries: List<LibraryEntry>) {
+        videoAdapter.submitList(entries)
+        emptyState.visibility = if (entries.isEmpty()) TextView.VISIBLE else TextView.GONE
+    }
+
+    private fun gridSpanCount(): Int = if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) 3 else 2
+
+    @Deprecated("Use OnBackPressedDispatcher for new code")
+    override fun onBackPressed() {
+        if (folderStack.isNotEmpty()) {
+            folderStack.removeLast()
+            libraryViewModel.folderStack = folderStack.toList()
+            showEntries(folderStack.lastOrNull()?.children ?: libraryRoots)
+        } else {
+            super.onBackPressed()
+        }
     }
 
     private fun isVideo(file: DocumentFile): Boolean {
@@ -145,41 +206,100 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-private data class VideoFile(val name: String, val uri: android.net.Uri)
+private class LibraryViewModel : ViewModel() {
+    var libraryRoots: List<LibraryFolder> = emptyList()
+    var folderStack: List<LibraryFolder> = emptyList()
+}
+
+private sealed interface LibraryEntry {
+    val name: String
+    val thumbnailUri: android.net.Uri
+}
+
+private data class LibraryVideo(
+    override val name: String,
+    val uri: android.net.Uri,
+) : LibraryEntry {
+    override val thumbnailUri: android.net.Uri get() = uri
+}
+
+private data class LibraryFolder(
+    override val name: String,
+    val uri: android.net.Uri,
+    val children: List<LibraryEntry>,
+) : LibraryEntry {
+    override val thumbnailUri: android.net.Uri get() = children.first().thumbnailUri
+}
 
 private class VideoAdapter(
-    private val onVideoClicked: (VideoFile) -> Unit
+    private val onVideoClicked: (LibraryVideo) -> Unit,
+    private val onFolderClicked: (LibraryFolder) -> Unit,
 ) : RecyclerView.Adapter<VideoAdapter.VideoViewHolder>() {
-    private var videos = emptyList<VideoFile>()
+    private var entries = emptyList<LibraryEntry>()
 
-    fun submitList(newVideos: List<VideoFile>) {
-        videos = newVideos
+    fun submitList(newEntries: List<LibraryEntry>) {
+        entries = newEntries
         notifyDataSetChanged()
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VideoViewHolder {
-        return VideoViewHolder(TextView(parent.context).apply {
+        val image = AspectRatioImageView(parent.context).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+        val title = TextView(parent.context).apply {
             gravity = android.view.Gravity.CENTER
-            textSize = 24f
-            setPadding(16, 32, 16, 32)
+            textSize = 16f
+            setPadding(8, 8, 8, 16)
+        }
+        return VideoViewHolder(LinearLayout(parent.context).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(image, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
+            addView(title, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ))
             layoutParams = RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.WRAP_CONTENT,
             )
-        })
+        }, image, title)
     }
 
     override fun onBindViewHolder(holder: VideoViewHolder, position: Int) {
-        holder.bind(videos[position])
+        holder.bind(entries[position])
     }
 
-    override fun getItemCount(): Int = videos.size
+    override fun getItemCount(): Int = entries.size
 
-    inner class VideoViewHolder(private val title: TextView) : RecyclerView.ViewHolder(title) {
-        fun bind(video: VideoFile) {
-            title.text = video.name
-            title.setOnClickListener { onVideoClicked(video) }
+    inner class VideoViewHolder(
+        itemView: LinearLayout,
+        private val thumbnail: ImageView,
+        private val title: TextView,
+    ) : RecyclerView.ViewHolder(itemView) {
+        fun bind(entry: LibraryEntry) {
+            title.text = entry.name
+            thumbnail.load(entry.thumbnailUri) {
+                crossfade(true)
+                placeholder(R.drawable.placeholder)
+                error(R.drawable.placeholder)
+            }
+            itemView.setOnClickListener {
+                when (entry) {
+                    is LibraryVideo -> onVideoClicked(entry)
+                    is LibraryFolder -> onFolderClicked(entry)
+                }
+            }
         }
+    }
+}
+
+private class AspectRatioImageView(context: android.content.Context) : ImageView(context) {
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, widthMeasureSpec)
+        setMeasuredDimension(measuredWidth, measuredWidth * 4 / 3)
     }
 }
 

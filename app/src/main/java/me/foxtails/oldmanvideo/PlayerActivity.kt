@@ -1,7 +1,9 @@
 package me.foxtails.oldmanvideo
 
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.media.AudioManager
+import android.media.MediaMetadataRetriever
 import android.os.Bundle
 import android.provider.Settings
 import android.view.SurfaceHolder
@@ -12,6 +14,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.viewModels
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.Utils
 import kotlin.math.roundToInt
@@ -25,10 +30,13 @@ class PlayerActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        hideSystemBars()
         val videoUri = intent.getStringExtra(VIDEO_URI_EXTRA) ?: run {
             finish()
             return
         }
+        requestOrientationFor(videoUri)
         surfaceView = SurfaceView(this)
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
@@ -117,6 +125,35 @@ class PlayerActivity : ComponentActivity() {
                 MPVLib.detachSurface()
             }
         })
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) hideSystemBars()
+    }
+
+    private fun hideSystemBars() {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.statusBars() or WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
+    private fun requestOrientationFor(videoUri: String) {
+        val orientation = runCatching {
+            MediaMetadataRetriever().use { retriever ->
+                retriever.setDataSource(this, android.net.Uri.parse(videoUri))
+                val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull()
+                val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull()
+                val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                if (width != null && height != null && (if (rotation % 180 == 0) width > height else height > width)) {
+                    ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                }
+            }
+        }.getOrDefault(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
+        requestedOrientation = orientation
     }
 
     override fun onBackPressed() {
