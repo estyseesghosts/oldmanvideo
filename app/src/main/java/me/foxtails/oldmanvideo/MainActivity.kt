@@ -211,13 +211,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun buildMovieVideo(movieFolder: DocumentFile): LibraryVideo? {
         val assets = try {
-            movieFolder.listFiles().associateBy { it.name.orEmpty() }
+            movieFolder.listFiles().toList()
         } catch (_: Exception) {
             return null
         }
-        val titleFile = assets.entries.firstOrNull { it.key.equals("title.json", ignoreCase = true) }?.value
-        val thumbnailFile = assets.entries.firstOrNull { it.key.equals("thumbnail.png", ignoreCase = true) }?.value
-        val videoFile = assets.entries.firstOrNull { it.key.equals("video.mp4", ignoreCase = true) }?.value
+        val titleFile = assets.firstOrNull { it.isFile && it.name.orEmpty().equals("title.json", ignoreCase = true) }
+        val thumbnailFile = assets.firstOrNull { it.isFile && it.name.orEmpty().equals("thumbnail.png", ignoreCase = true) }
+        val videoFile = assets.firstOrNull { it.isFile && it.name.orEmpty().matches(Regex("video\\..+", RegexOption.IGNORE_CASE)) }
+        val subtitleFile = assets.firstOrNull { it.isFile && it.name.orEmpty().matches(Regex("subs\\..+", RegexOption.IGNORE_CASE)) }
         if (titleFile?.isFile != true || thumbnailFile?.isFile != true || videoFile?.isFile != true) return null
         val title = runCatching {
             contentResolver.openInputStream(titleFile.uri)?.bufferedReader()?.use { reader ->
@@ -228,7 +229,7 @@ class MainActivity : AppCompatActivity() {
             name = title,
             uri = videoFile.uri,
             thumbnailUri = thumbnailFile.uri,
-            externalSubtitleUri = findExternalSubtitle(movieFolder, videoFile)?.uri,
+            externalSubtitleUri = subtitleFile?.uri,
         )
     }
 

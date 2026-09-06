@@ -1,13 +1,33 @@
 <resources>
 
+    <color name="action_bar_background">#101014</color>
+
     <style name="Theme.VideoPlayer" parent="Theme.MaterialComponents.Light">
         <item name="android:fontFamily">serif</item>
         <item name="fontFamily">serif</item>
         <item name="android:colorAccent">#D0BCFF</item>
+        <item name="colorPrimary">#101014</item>
+        <item name="colorOnPrimary">#F5F0F7</item>
+        <item name="android:colorPrimary">#101014</item>
         <item name="android:windowBackground">#101014</item>
+        <item name="actionBarStyle">@style/Theme.VideoPlayer.ActionBar</item>
+        <item name="android:actionBarStyle">@style/Theme.VideoPlayer.ActionBar</item>
         <item name="colorSurface">#17171D</item>
         <item name="colorOnSurface">#F5F0F7</item>
         <item name="android:textColorPrimary">#F5F0F7</item>
         <item name="android:textColorSecondary">#CAC4D0</item>
+    </style>
+
+    <style name="Theme.VideoPlayer.ActionBar" parent="Widget.MaterialComponents.ActionBar.Solid">
+        <item name="background">@color/action_bar_background</item>
+        <item name="titleTextStyle">@style/Theme.VideoPlayer.ActionBar.Title</item>
+        <item name="android:titleTextStyle">@style/Theme.VideoPlayer.ActionBar.Title</item>
+    </style>
+
+    <style name="Theme.VideoPlayer.ActionBar.Title" parent="TextAppearance.MaterialComponents.Headline6">
+        <item name="android:fontFamily">serif</item>
+        <item name="fontFamily">serif</item>
+        <item name="android:textColor">#F5F0F7</item>
+        <item name="android:textStyle">bold</item>
     </style>
 </resources>
