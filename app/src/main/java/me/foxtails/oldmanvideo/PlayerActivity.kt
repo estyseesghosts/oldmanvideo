@@ -1,15 +1,27 @@
 package me.foxtails.oldmanvideo
 
+import android.content.Context
+import android.media.AudioManager
 import android.os.Bundle
+import android.provider.Settings
 import android.view.SurfaceHolder
 import android.view.SurfaceView
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.viewModels
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.runtime.mutableFloatStateOf
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.Utils
+import kotlin.math.roundToInt
 
 class PlayerActivity : ComponentActivity() {
+    private val playerViewModel: PlayerViewModel by viewModels()
     private lateinit var surfaceView: SurfaceView
     private var isMpvInitialized = false
+    private var isMpvShuttingDown = false
+    private var isSurfaceAttached = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -18,7 +30,47 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         surfaceView = SurfaceView(this)
-        setContentView(surfaceView)
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+        val volumeFraction = mutableFloatStateOf(
+            audioManager.getStreamVolume(AudioManager.STREAM_MUSIC) / maxVolume.toFloat(),
+        )
+        val brightnessFraction = mutableFloatStateOf(window.attributes.screenBrightness)
+        if (brightnessFraction.floatValue == -1f) {
+            brightnessFraction.floatValue = Settings.System.getInt(
+                contentResolver,
+                Settings.System.SCREEN_BRIGHTNESS,
+                128,
+            ) / 255f
+        }
+
+        val container = FrameLayout(this)
+        container.addView(surfaceView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        container.addView(ComposeView(this).apply {
+            setContent {
+                PlayerControls(
+                    vm = playerViewModel,
+                    volumeFraction = volumeFraction.floatValue,
+                    brightnessFraction = brightnessFraction.floatValue,
+                    onVolumeChange = { fraction ->
+                        volumeFraction.floatValue = fraction
+                        audioManager.setStreamVolume(
+                            AudioManager.STREAM_MUSIC,
+                            (fraction * maxVolume).roundToInt().coerceIn(0, maxVolume),
+                            0,
+                        )
+                    },
+                    onBrightnessChange = { fraction ->
+                        brightnessFraction.floatValue = fraction
+                        window.attributes = window.attributes.apply {
+                            screenBrightness = fraction.coerceIn(0.01f, 1f)
+                        }
+                    },
+                    onExit = { finish() },
+                )
+            }
+        }, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        setContentView(container)
 
         MPVLib.create(this)
         MPVLib.setOptionString("config", "yes")
@@ -37,6 +89,10 @@ class PlayerActivity : ComponentActivity() {
         MPVLib.setOptionString("demuxer-max-bytes", "33554432")
         MPVLib.setOptionString("demuxer-max-back-bytes", "33554432")
         MPVLib.init()
+        MPVLib.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
+        MPVLib.observeProperty("duration", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
+        MPVLib.observeProperty("pause", MPVLib.MpvFormat.MPV_FORMAT_FLAG)
+        MPVLib.addObserver(playerViewModel)
         MPVLib.setOptionString("save-position-on-quit", "no")
         MPVLib.setOptionString("force-window", "no")
         MPVLib.setOptionString("idle", "once")
@@ -44,7 +100,9 @@ class PlayerActivity : ComponentActivity() {
 
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) {
+                if (!isMpvInitialized || isMpvShuttingDown) return
                 MPVLib.attachSurface(holder.surface)
+                isSurfaceAttached = true
                 MPVLib.setOptionString("force-window", "yes")
                 MPVLib.command(arrayOf("loadfile", resolveVideoPath(videoUri)))
             }
@@ -52,6 +110,8 @@ class PlayerActivity : ComponentActivity() {
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
 
             override fun surfaceDestroyed(holder: SurfaceHolder) {
+                if (!isSurfaceAttached || !isMpvInitialized || isMpvShuttingDown) return
+                isSurfaceAttached = false
                 MPVLib.setPropertyString("vo", "null")
                 MPVLib.setOptionString("force-window", "no")
                 MPVLib.detachSurface()
@@ -60,7 +120,6 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onBackPressed() {
-        destroyMpv()
         finish()
     }
 
@@ -70,10 +129,18 @@ class PlayerActivity : ComponentActivity() {
     }
 
     private fun destroyMpv() {
-        if (isMpvInitialized) {
-            MPVLib.destroy()
-            isMpvInitialized = false
+        if (!isMpvInitialized || isMpvShuttingDown) return
+        isMpvShuttingDown = true
+        isMpvInitialized = false
+
+        MPVLib.removeObserver(playerViewModel)
+        if (isSurfaceAttached) {
+            isSurfaceAttached = false
+            MPVLib.setPropertyString("vo", "null")
+            MPVLib.setOptionString("force-window", "no")
+            MPVLib.detachSurface()
         }
+        MPVLib.destroy()
     }
 
     private fun resolveVideoPath(uriString: String): String {
