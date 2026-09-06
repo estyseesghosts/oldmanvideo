@@ -1,4 +1,13 @@
 <resources>
 
-    <style name="Theme.VideoPlayer" parent="Theme.MaterialComponents.Light" />
+    <style name="Theme.VideoPlayer" parent="Theme.MaterialComponents.Light">
+        <item name="android:fontFamily">serif</item>
+        <item name="fontFamily">serif</item>
+        <item name="android:colorAccent">#D0BCFF</item>
+        <item name="android:windowBackground">#101014</item>
+        <item name="colorSurface">#17171D</item>
+        <item name="colorOnSurface">#F5F0F7</item>
+        <item name="android:textColorPrimary">#F5F0F7</item>
+        <item name="android:textColorSecondary">#CAC4D0</item>
+    </style>
 </resources>

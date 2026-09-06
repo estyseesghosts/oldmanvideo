@@ -19,6 +19,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import `is`.xyz.mpv.MPVLib
 import `is`.xyz.mpv.Utils
+import me.foxtails.oldmanvideo.ui.theme.VideoPlayerTheme
 import kotlin.math.roundToInt
 
 class PlayerActivity : ComponentActivity() {
@@ -36,6 +37,7 @@ class PlayerActivity : ComponentActivity() {
             finish()
             return
         }
+        val externalSubtitleUri = intent.getStringExtra(EXTERNAL_SUBTITLE_EXTRA)
         requestOrientationFor(videoUri)
         surfaceView = SurfaceView(this)
         val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -56,26 +58,31 @@ class PlayerActivity : ComponentActivity() {
         container.addView(surfaceView, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         container.addView(ComposeView(this).apply {
             setContent {
-                PlayerControls(
-                    vm = playerViewModel,
-                    volumeFraction = volumeFraction.floatValue,
-                    brightnessFraction = brightnessFraction.floatValue,
-                    onVolumeChange = { fraction ->
-                        volumeFraction.floatValue = fraction
-                        audioManager.setStreamVolume(
-                            AudioManager.STREAM_MUSIC,
-                            (fraction * maxVolume).roundToInt().coerceIn(0, maxVolume),
-                            0,
-                        )
-                    },
-                    onBrightnessChange = { fraction ->
-                        brightnessFraction.floatValue = fraction
-                        window.attributes = window.attributes.apply {
-                            screenBrightness = fraction.coerceIn(0.01f, 1f)
-                        }
-                    },
-                    onExit = { finish() },
-                )
+                VideoPlayerTheme {
+                    PlayerControls(
+                        vm = playerViewModel,
+                        volumeFraction = volumeFraction.floatValue,
+                        brightnessFraction = brightnessFraction.floatValue,
+                        subtitleText = playerViewModel.subtitleText,
+                        subtitleAvailable = playerViewModel.subtitleAvailable,
+                        onVolumeChange = { fraction ->
+                            volumeFraction.floatValue = fraction
+                            audioManager.setStreamVolume(
+                                AudioManager.STREAM_MUSIC,
+                                (fraction * maxVolume).roundToInt().coerceIn(0, maxVolume),
+                                0,
+                            )
+                        },
+                        onBrightnessChange = { fraction ->
+                            brightnessFraction.floatValue = fraction
+                            window.attributes = window.attributes.apply {
+                                screenBrightness = fraction.coerceIn(0.01f, 1f)
+                            }
+                        },
+                        onToggleSubtitles = playerViewModel::toggleSubtitles,
+                        onExit = { finish() },
+                    )
+                }
             }
         }, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         setContentView(container)
@@ -100,6 +107,8 @@ class PlayerActivity : ComponentActivity() {
         MPVLib.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
         MPVLib.observeProperty("duration", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
         MPVLib.observeProperty("pause", MPVLib.MpvFormat.MPV_FORMAT_FLAG)
+        MPVLib.observeProperty("sub-text", MPVLib.MpvFormat.MPV_FORMAT_STRING)
+        MPVLib.observeProperty("sid", MPVLib.MpvFormat.MPV_FORMAT_STRING)
         MPVLib.addObserver(playerViewModel)
         MPVLib.setOptionString("save-position-on-quit", "no")
         MPVLib.setOptionString("force-window", "no")
@@ -113,6 +122,11 @@ class PlayerActivity : ComponentActivity() {
                 isSurfaceAttached = true
                 MPVLib.setOptionString("force-window", "yes")
                 MPVLib.command(arrayOf("loadfile", resolveVideoPath(videoUri)))
+                externalSubtitleUri?.let { subtitleUri ->
+                    MPVLib.command(arrayOf("sub-add", resolveVideoPath(subtitleUri), "add"))
+                    playerViewModel.setExternalSubtitleAvailable(true)
+                } ?: playerViewModel.setExternalSubtitleAvailable(false)
+                MPVLib.setPropertyString("sid", "no")
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
@@ -192,5 +206,6 @@ class PlayerActivity : ComponentActivity() {
 
     companion object {
         const val VIDEO_URI_EXTRA = "video_uri"
+        const val EXTERNAL_SUBTITLE_EXTRA = "external_subtitle_uri"
     }
 }

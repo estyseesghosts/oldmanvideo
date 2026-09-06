@@ -12,12 +12,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +45,11 @@ fun PlayerControls(
     vm: PlayerViewModel,
     volumeFraction: Float,
     brightnessFraction: Float,
+    subtitleText: String,
+    subtitleAvailable: Boolean,
     onVolumeChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
+    onToggleSubtitles: () -> Unit,
     onExit: () -> Unit,
 ) {
     var controlsVisible by remember { mutableStateOf(false) }
@@ -66,96 +74,152 @@ fun PlayerControls(
                 detectTapGestures(onTap = { show() })
             },
     ) {
-        if (controlsVisible) {
-            IconButton(
-                onClick = onExit,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(24.dp)
-                    .size(64.dp),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Exit",
-                    tint = Color.White,
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-
-            IconButton(
-                onClick = { vm.togglePause(); show() },
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(96.dp),
-            ) {
-                Icon(
-                    imageVector = if (vm.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                    contentDescription = if (vm.isPaused) "Play" else "Pause",
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
-                )
-            }
-
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
             Box(
                 modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.10f)),
+            )
+        }
+
+        if (subtitleText.isNotBlank()) {
+            Text(
+                text = subtitleText,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = 22.sp,
+                modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp, vertical = 24.dp)
-                    .height(64.dp),
-            ) {
-                Slider(
-                    value = seekPreview ?: vm.positionSeconds.toFloat(),
-                    valueRange = 0f..maxOf(vm.durationSeconds.toFloat(), 0.01f),
-                    onValueChange = {
-                        interacting = true
-                        seekPreview = it
-                        show()
-                    },
-                    onValueChangeFinished = {
-                        seekPreview?.let { vm.seekTo(it.toDouble()) }
-                        seekPreview = null
-                        interacting = false
-                    },
+                    .padding(horizontal = 32.dp, vertical = 80.dp),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+        ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                IconButton(
+                    onClick = onExit,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(24.dp)
+                        .size(64.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Exit",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp),
+                    )
+                }
+
+                if (subtitleAvailable) {
+                    Button(
+                        onClick = {
+                            onToggleSubtitles()
+                            show()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (vm.subtitlesEnabled) {
+                                androidx.compose.material3.MaterialTheme.colorScheme.primary
+                            } else {
+                                Color.Gray
+                            },
+                        ),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(24.dp)
+                            .height(64.dp),
+                    ) {
+                        Text(
+                            text = if (vm.subtitlesEnabled) "CC ON" else "CC OFF",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp,
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { vm.togglePause(); show() },
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .size(96.dp),
+                ) {
+                    Icon(
+                        imageVector = if (vm.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (vm.isPaused) "Play" else "Pause",
+                        tint = Color.White,
+                        modifier = Modifier.size(64.dp),
+                    )
+                }
+
+                Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 24.dp)
+                        .height(64.dp),
+                ) {
+                    Slider(
+                        value = seekPreview ?: vm.positionSeconds.toFloat(),
+                        valueRange = 0f..maxOf(vm.durationSeconds.toFloat(), 0.01f),
+                        onValueChange = {
+                            interacting = true
+                            seekPreview = it
+                            show()
+                        },
+                        onValueChangeFinished = {
+                            seekPreview?.let { vm.seekTo(it.toDouble()) }
+                            seekPreview = null
+                            interacting = false
+                        },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .fillMaxWidth(),
+                    )
+                    Text(
+                        text = formatTimeRemaining(
+                            vm.durationSeconds - (seekPreview ?: vm.positionSeconds.toFloat()).toDouble(),
+                        ),
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    )
+                }
+
+                VerticalRail(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 24.dp)
+                        .width(72.dp)
+                        .fillMaxHeight(0.6f),
+                    fraction = volumeFraction,
+                    label = "V",
+                    onDrag = { onVolumeChange(it); show() },
+                    onStart = { interacting = true; show() },
+                    onEnd = { interacting = false },
                 )
-                Text(
-                    text = formatTimeRemaining(
-                        vm.durationSeconds - (seekPreview ?: vm.positionSeconds.toFloat()).toDouble(),
-                    ),
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 16.sp,
-                    modifier = Modifier.align(Alignment.TopEnd),
+
+                VerticalRail(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 24.dp)
+                        .width(72.dp)
+                        .fillMaxHeight(0.6f),
+                    fraction = brightnessFraction,
+                    label = "B",
+                    onDrag = { onBrightnessChange(it); show() },
+                    onStart = { interacting = true; show() },
+                    onEnd = { interacting = false },
                 )
             }
-
-            VerticalRail(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(start = 24.dp)
-                    .width(72.dp)
-                    .fillMaxHeight(0.6f),
-                fraction = volumeFraction,
-                label = "V",
-                onDrag = { onVolumeChange(it); show() },
-                onStart = { interacting = true; show() },
-                onEnd = { interacting = false },
-            )
-
-            VerticalRail(
-                modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 24.dp)
-                    .width(72.dp)
-                    .fillMaxHeight(0.6f),
-                fraction = brightnessFraction,
-                label = "B",
-                onDrag = { onBrightnessChange(it); show() },
-                onStart = { interacting = true; show() },
-                onEnd = { interacting = false },
-            )
         }
     }
 }

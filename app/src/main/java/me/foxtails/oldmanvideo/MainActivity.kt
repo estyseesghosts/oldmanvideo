@@ -1,6 +1,7 @@
 package me.foxtails.oldmanvideo
 
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
@@ -18,12 +19,15 @@ import androidx.lifecycle.ViewModel
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.material.color.MaterialColors
 import coil.load
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
@@ -62,12 +66,20 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        libraryRoots = libraryViewModel.libraryRoots
+        libraryRoots = libraryViewModel.libraryRoots.ifEmpty { loadCachedLibrary() }
+        val shouldScanSavedFolders = libraryRoots.isEmpty() && getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+            .getStringSet(FOLDER_URIS_KEY, emptySet())
+            .orEmpty()
+            .any(String::isNotBlank)
+        if (libraryViewModel.libraryRoots.isEmpty() && libraryRoots.isNotEmpty()) {
+            libraryViewModel.libraryRoots = libraryRoots
+        }
         folderStack.addAll(libraryViewModel.folderStack)
         videoAdapter = VideoAdapter(
             onVideoClicked = { video ->
                 startActivity(Intent(this, PlayerActivity::class.java).apply {
                     putExtra(PlayerActivity.VIDEO_URI_EXTRA, video.uri.toString())
+                    putExtra(PlayerActivity.EXTERNAL_SUBTITLE_EXTRA, video.externalSubtitleUri?.toString())
                 })
             },
             onFolderClicked = { folder ->
@@ -81,6 +93,8 @@ class MainActivity : AppCompatActivity() {
             adapter = videoAdapter
         }
         swipeRefresh = SwipeRefreshLayout(this).apply {
+            setBackgroundColor(MaterialColors.getColor(this@MainActivity, com.google.android.material.R.attr.colorSurface, android.graphics.Color.DKGRAY))
+            setColorSchemeColors(MaterialColors.getColor(this@MainActivity, com.google.android.material.R.attr.colorPrimary, android.graphics.Color.WHITE))
             setOnRefreshListener { scanSavedFolders() }
             addView(grid, ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -89,6 +103,8 @@ class MainActivity : AppCompatActivity() {
         }
         emptyState = TextView(this).apply {
             gravity = android.view.Gravity.CENTER
+            typeface = Typeface.SERIF
+            setTextColor(MaterialColors.getColor(this@MainActivity, com.google.android.material.R.attr.colorOnSurface, android.graphics.Color.WHITE))
             text = getString(R.string.empty_library)
             textSize = 18f
             setPadding(32, 32, 32, 32)
@@ -104,6 +120,10 @@ class MainActivity : AppCompatActivity() {
             ))
         })
         showEntries(folderStack.lastOrNull()?.children ?: libraryRoots)
+        if (shouldScanSavedFolders) {
+            swipeRefresh.isRefreshing = true
+            scanSavedFolders()
+        }
     }
 
 
@@ -124,6 +144,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFERENCES_NAME = "video_player_preferences"
         private const val FOLDER_URIS_KEY = "folder_uris"
+        private const val LIBRARY_CACHE_KEY = "library_cache"
         private const val ADD_FOLDER_MENU_ID = 1
     }
 
@@ -147,6 +168,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 libraryRoots = roots.sortedBy { it.name.lowercase(Locale.ROOT) }
                 libraryViewModel.libraryRoots = libraryRoots
+                saveCachedLibrary(libraryRoots)
                 folderStack.clear()
                 libraryViewModel.folderStack = emptyList()
                 showEntries(libraryRoots)
@@ -167,8 +189,16 @@ class MainActivity : AppCompatActivity() {
             for (file in files) {
                 coroutineContext.ensureActive()
                 when {
+                    file.isDirectory && file.name.orEmpty().endsWith(".movie", ignoreCase = true) ->
+                        buildMovieVideo(file)?.let(::add)
                     file.isDirectory -> buildFolder(file)?.let(::add)
-                    file.isFile && isVideo(file) -> add(LibraryVideo(file.name.orEmpty(), file.uri))
+                    file.isFile && isVideo(file) -> add(
+                        LibraryVideo(
+                            name = file.name.orEmpty(),
+                            uri = file.uri,
+                            externalSubtitleUri = findExternalSubtitle(folder, file)?.uri,
+                        ),
+                    )
                 }
             }
         }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
@@ -176,6 +206,29 @@ class MainActivity : AppCompatActivity() {
             name = folder.name.orEmpty(),
             uri = folder.uri,
             children = children,
+        )
+    }
+
+    private fun buildMovieVideo(movieFolder: DocumentFile): LibraryVideo? {
+        val assets = try {
+            movieFolder.listFiles().associateBy { it.name.orEmpty() }
+        } catch (_: Exception) {
+            return null
+        }
+        val titleFile = assets.entries.firstOrNull { it.key.equals("title.json", ignoreCase = true) }?.value
+        val thumbnailFile = assets.entries.firstOrNull { it.key.equals("thumbnail.png", ignoreCase = true) }?.value
+        val videoFile = assets.entries.firstOrNull { it.key.equals("video.mp4", ignoreCase = true) }?.value
+        if (titleFile?.isFile != true || thumbnailFile?.isFile != true || videoFile?.isFile != true) return null
+        val title = runCatching {
+            contentResolver.openInputStream(titleFile.uri)?.bufferedReader()?.use { reader ->
+                JSONObject(reader.readText()).optString("title").trim()
+            }
+        }.getOrNull()?.takeIf(String::isNotBlank) ?: return null
+        return LibraryVideo(
+            name = title,
+            uri = videoFile.uri,
+            thumbnailUri = thumbnailFile.uri,
+            externalSubtitleUri = findExternalSubtitle(movieFolder, videoFile)?.uri,
         )
     }
 
@@ -204,6 +257,76 @@ class MainActivity : AppCompatActivity() {
             file.name.orEmpty().endsWith(extension, ignoreCase = true)
         }
     }
+
+    private fun findExternalSubtitle(parent: DocumentFile, video: DocumentFile): DocumentFile? {
+        val videoName = video.name.orEmpty()
+        val baseName = videoName.substringBeforeLast('.', videoName)
+        return parent.listFiles().firstOrNull { sibling ->
+            sibling.isFile && sibling.name.orEmpty().equals("$baseName.srt", ignoreCase = true)
+        }
+    }
+
+    private fun saveCachedLibrary(roots: List<LibraryFolder>) {
+        val json = JSONArray().apply { roots.forEach { put(folderToJson(it)) } }
+        getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(LIBRARY_CACHE_KEY, json.toString())
+            .apply()
+    }
+
+    private fun loadCachedLibrary(): List<LibraryFolder> {
+        val cached = getSharedPreferences(PREFERENCES_NAME, MODE_PRIVATE)
+            .getString(LIBRARY_CACHE_KEY, null)
+            ?: return emptyList()
+        return runCatching {
+            val json = JSONArray(cached)
+            (0 until json.length()).mapNotNull { index -> json.optJSONObject(index)?.let(::folderFromJson) }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun folderToJson(folder: LibraryFolder): JSONObject = JSONObject().apply {
+        put("name", folder.name)
+        put("uri", folder.uri.toString())
+        put("children", JSONArray().apply {
+            folder.children.forEach { child ->
+                put(when (child) {
+                    is LibraryFolder -> folderToJson(child)
+                    is LibraryVideo -> JSONObject().apply {
+                        put("type", "video")
+                        put("name", child.name)
+                        put("uri", child.uri.toString())
+                        put("thumbnailUri", child.thumbnailUri.toString())
+                        child.externalSubtitleUri?.let { put("externalSubtitleUri", it.toString()) }
+                    }
+                })
+            }
+        })
+    }
+
+    private fun folderFromJson(json: JSONObject): LibraryFolder? {
+        val name = json.optString("name")
+        val uri = json.optString("uri").takeIf(String::isNotEmpty)?.let(android.net.Uri::parse) ?: return null
+        val childrenJson = json.optJSONArray("children") ?: return null
+        val children = (0 until childrenJson.length()).mapNotNull { index ->
+            val child = childrenJson.optJSONObject(index) ?: return@mapNotNull null
+            if (child.optString("type") == "video") {
+                val childUri = child.optString("uri").takeIf(String::isNotEmpty)?.let(android.net.Uri::parse)
+                childUri?.let {
+                    val subtitleUri = child.optString("externalSubtitleUri")
+                        .takeIf(String::isNotEmpty)
+                        ?.let(android.net.Uri::parse)
+                    val thumbnailUri = child.optString("thumbnailUri")
+                        .takeIf(String::isNotEmpty)
+                        ?.let(android.net.Uri::parse)
+                        ?: it
+                    LibraryVideo(child.optString("name"), it, thumbnailUri, subtitleUri)
+                }
+            } else {
+                folderFromJson(child)
+            }
+        }
+        return LibraryFolder(name, uri, children)
+    }
 }
 
 class LibraryViewModel : ViewModel() {
@@ -219,9 +342,9 @@ sealed interface LibraryEntry {
 data class LibraryVideo(
     override val name: String,
     val uri: android.net.Uri,
-) : LibraryEntry {
-    override val thumbnailUri: android.net.Uri get() = uri
-}
+    override val thumbnailUri: android.net.Uri = uri,
+    val externalSubtitleUri: android.net.Uri? = null,
+) : LibraryEntry
 
 data class LibraryFolder(
     override val name: String,
@@ -248,6 +371,8 @@ private class VideoAdapter(
         }
         val title = TextView(parent.context).apply {
             gravity = android.view.Gravity.CENTER
+            typeface = Typeface.SERIF
+            setTextColor(MaterialColors.getColor(parent.context, com.google.android.material.R.attr.colorOnSurface, android.graphics.Color.WHITE))
             textSize = 16f
             setPadding(8, 8, 8, 16)
         }
