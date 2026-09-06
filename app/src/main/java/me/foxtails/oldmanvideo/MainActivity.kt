@@ -206,24 +206,24 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-private class LibraryViewModel : ViewModel() {
+class LibraryViewModel : ViewModel() {
     var libraryRoots: List<LibraryFolder> = emptyList()
     var folderStack: List<LibraryFolder> = emptyList()
 }
 
-private sealed interface LibraryEntry {
+sealed interface LibraryEntry {
     val name: String
     val thumbnailUri: android.net.Uri
 }
 
-private data class LibraryVideo(
+data class LibraryVideo(
     override val name: String,
     val uri: android.net.Uri,
 ) : LibraryEntry {
     override val thumbnailUri: android.net.Uri get() = uri
 }
 
-private data class LibraryFolder(
+data class LibraryFolder(
     override val name: String,
     val uri: android.net.Uri,
     val children: List<LibraryEntry>,
