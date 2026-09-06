@@ -1,0 +1,4 @@
+<resources>
+
+    <style name="Theme.VideoPlayer" parent="Theme.MaterialComponents.Light" />
+</resources>

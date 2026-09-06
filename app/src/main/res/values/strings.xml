@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Video Player</string>
+    <string name="add_folder">Add folder</string>
+    <string name="empty_library">No videos yet. Use the menu to add a folder.</string>
+</resources>
