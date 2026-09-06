@@ -23,6 +23,7 @@ class PlayerViewModel : ViewModel(), MPVLib.EventObserver {
         private set
 
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var externalSubtitleTrackId: String? = null
 
     fun togglePause() {
         isPaused = !isPaused
@@ -30,7 +31,14 @@ class PlayerViewModel : ViewModel(), MPVLib.EventObserver {
     }
 
     fun toggleSubtitles() {
-        MPVLib.setPropertyString("sid", if (subtitlesEnabled) "no" else "auto")
+        if (subtitlesEnabled) {
+            MPVLib.setPropertyString("sid", "no")
+            subtitleText = ""
+        } else {
+            externalSubtitleTrackId?.let { trackId ->
+                MPVLib.setPropertyString("sid", trackId)
+            }
+        }
     }
 
     fun setExternalSubtitleAvailable(available: Boolean) {
@@ -66,16 +74,31 @@ class PlayerViewModel : ViewModel(), MPVLib.EventObserver {
                 "sub-text" -> subtitleText = value
                 "sid" -> {
                     subtitlesEnabled = value.isNotBlank() && value != "no" && value != "0"
-                    if (subtitlesEnabled) subtitleAvailable = true
+                    if (subtitlesEnabled) {
+                        externalSubtitleTrackId = value
+                        subtitleAvailable = true
+                    } else {
+                        subtitleText = ""
+                    }
                 }
             }
         }
     }
 
-    override fun event(eventId: Int) = Unit
+    override fun event(eventId: Int) {
+        if (eventId == MPVLib.MpvEvent.MPV_EVENT_FILE_LOADED) {
+            mainHandler.post { onFileLoaded?.invoke() }
+        }
+    }
+
+    var onFileLoaded: (() -> Unit)? = null
+        set(value) {
+            field = value
+        }
 
     override fun onCleared() {
         mainHandler.removeCallbacksAndMessages(null)
+        onFileLoaded = null
         MPVLib.removeObserver(this)
         super.onCleared()
     }

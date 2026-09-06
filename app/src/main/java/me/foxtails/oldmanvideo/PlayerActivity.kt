@@ -28,6 +28,8 @@ class PlayerActivity : ComponentActivity() {
     private var isMpvInitialized = false
     private var isMpvShuttingDown = false
     private var isSurfaceAttached = false
+    private var pendingExternalSubtitlePath: String? = null
+    private var externalSubtitleAdded = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -103,6 +105,7 @@ class PlayerActivity : ComponentActivity() {
         MPVLib.setOptionString("input-default-bindings", "yes")
         MPVLib.setOptionString("demuxer-max-bytes", "33554432")
         MPVLib.setOptionString("demuxer-max-back-bytes", "33554432")
+        MPVLib.setOptionString("sub-font-size", "48")
         MPVLib.init()
         MPVLib.observeProperty("time-pos", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
         MPVLib.observeProperty("duration", MPVLib.MpvFormat.MPV_FORMAT_DOUBLE)
@@ -110,6 +113,16 @@ class PlayerActivity : ComponentActivity() {
         MPVLib.observeProperty("sub-text", MPVLib.MpvFormat.MPV_FORMAT_STRING)
         MPVLib.observeProperty("sid", MPVLib.MpvFormat.MPV_FORMAT_STRING)
         MPVLib.addObserver(playerViewModel)
+        playerViewModel.onFileLoaded = {
+            if (isMpvInitialized && !isMpvShuttingDown && !externalSubtitleAdded) {
+                pendingExternalSubtitlePath?.let { subtitlePath ->
+                    MPVLib.command(arrayOf("sub-add", subtitlePath, "select"))
+                    externalSubtitleAdded = true
+                    playerViewModel.setExternalSubtitleAvailable(true)
+                    MPVLib.setPropertyString("sid", "no")
+                }
+            }
+        }
         MPVLib.setOptionString("save-position-on-quit", "no")
         MPVLib.setOptionString("force-window", "no")
         MPVLib.setOptionString("idle", "once")
@@ -122,11 +135,11 @@ class PlayerActivity : ComponentActivity() {
                 isSurfaceAttached = true
                 MPVLib.setOptionString("force-window", "yes")
                 MPVLib.command(arrayOf("loadfile", resolveVideoPath(videoUri)))
-                externalSubtitleUri?.let { subtitleUri ->
-                    MPVLib.command(arrayOf("sub-add", resolveVideoPath(subtitleUri), "add"))
-                    playerViewModel.setExternalSubtitleAvailable(true)
-                } ?: playerViewModel.setExternalSubtitleAvailable(false)
-                MPVLib.setPropertyString("sid", "no")
+                pendingExternalSubtitlePath = externalSubtitleUri?.let(::resolveVideoPath)
+                if (pendingExternalSubtitlePath == null) {
+                    playerViewModel.setExternalSubtitleAvailable(false)
+                    MPVLib.setPropertyString("sid", "no")
+                }
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = Unit
@@ -183,6 +196,8 @@ class PlayerActivity : ComponentActivity() {
         if (!isMpvInitialized || isMpvShuttingDown) return
         isMpvShuttingDown = true
         isMpvInitialized = false
+        pendingExternalSubtitlePath = null
+        playerViewModel.onFileLoaded = null
 
         MPVLib.removeObserver(playerViewModel)
         if (isSurfaceAttached) {

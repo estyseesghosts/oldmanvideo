@@ -86,18 +86,6 @@ fun PlayerControls(
             )
         }
 
-        if (subtitleText.isNotBlank()) {
-            Text(
-                text = subtitleText,
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                fontSize = 22.sp,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(horizontal = 32.dp, vertical = 80.dp),
-            )
-        }
-
         AnimatedVisibility(
             visible = controlsVisible,
             enter = fadeIn(),
